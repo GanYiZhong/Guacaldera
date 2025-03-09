@@ -1,0 +1,385 @@
+<!-- plugins/guacamole/templates/guacamole.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Caldera Guacamole Plugin</title>
+    <!-- 使用CDN引用jQuery和jQuery UI -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
+    <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css">
+    <link rel="stylesheet" href="/gui/css/shared.css">
+    
+    <style>
+        /* 保留原有樣式 */
+        .container {
+            padding: 20px;
+        }
+        .status-panel {
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .status-item {
+            margin-bottom: 10px;
+        }
+        .status-label {
+            font-weight: bold;
+            display: inline-block;
+            width: 100px;
+        }
+        .status-value {
+            display: inline-block;
+        }
+        .running {
+            color: green;
+        }
+        .stopped {
+            color: red;
+        }
+        .button-panel {
+            margin-bottom: 20px;
+        }
+        .button-panel button {
+            margin-right: 10px;
+        }
+        .connection-form {
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        .guacamole-frame {
+            width: 100%;
+            height: 600px;
+            border: none;
+            margin-top: 20px;
+            display: none;
+        }
+        /* 添加調試面板樣式 */
+        #debug-panel {
+            margin-top: 20px;
+            background-color: #f8f9fa;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .debug-log {
+            font-family: monospace;
+            margin: 5px 0;
+            padding: 3px;
+            border-bottom: 1px solid #eee;
+        }
+        .error {
+            color: red;
+        }
+        .success {
+            color: green;
+        }
+        .info {
+            color: blue;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Caldera Guacamole 插件</h1>
+        
+        <div class="status-panel">
+            <h2>服務狀態</h2>
+            <div class="status-item">
+                <span class="status-label">guacd:</span>
+                <span class="status-value" id="guacd-status">{{status.guacd}}</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">guacamole:</span>
+                <span class="status-value" id="guacamole-status">{{status.guacamole}}</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">mysql:</span>
+                <span class="status-value" id="mysql-status">{{status.mysql}}</span>
+            </div>
+        </div>
+        
+        <div class="button-panel">
+            <button id="start-btn">啟動服務</button>
+            <button id="stop-btn">停止服務</button>
+            <button id="refresh-btn">刷新狀態</button>
+            <button id="open-guacamole">打開 Guacamole</button>
+        </div>
+        
+        <div class="connection-form">
+            <h2>創建新連接</h2>
+            <div class="form-group">
+                <label for="connection-name">連接名稱</label>
+                <input type="text" id="connection-name" placeholder="輸入連接名稱">
+            </div>
+            <div class="form-group">
+                <label for="protocol">協議</label>
+                <select id="protocol">
+                    <option value="rdp">RDP</option>
+                    <option value="ssh">SSH</option>
+                    <option value="vnc">VNC</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="host">主機地址</label>
+                <input type="text" id="host" placeholder="輸入主機地址">
+            </div>
+            <div class="form-group">
+                <label for="port">端口</label>
+                <input type="number" id="port" value="3389">
+            </div>
+            <div class="form-group">
+                <label for="username">用戶名</label>
+                <input type="text" id="username" placeholder="輸入用戶名">
+            </div>
+            <div class="form-group">
+                <label for="password">密碼</label>
+                <input type="password" id="password" placeholder="輸入密碼">
+            </div>
+            <button id="create-connection-btn">創建連接</button>
+        </div>
+        
+        <iframe id="guacamole-frame" class="guacamole-frame" src=""></iframe>
+        
+        <!-- 添加調試面板 -->
+        <div id="debug-panel">
+            <h3>調試信息</h3>
+            <div id="debug-log"></div>
+        </div>
+    </div>
+    
+    <script>
+        // 調試日誌功能
+        function debugLog(message, type) {
+            var logElement = document.getElementById('debug-log');
+            var logEntry = document.createElement('div');
+            logEntry.className = 'debug-log ' + (type || 'info');
+            logEntry.textContent = new Date().toLocaleTimeString() + ': ' + message;
+            logElement.appendChild(logEntry);
+            console.log(message);
+        }
+        
+        debugLog('頁面加載中...', 'info');
+        
+        // 等待文檔加載完成
+        document.addEventListener('DOMContentLoaded', function() {
+            debugLog('DOM 加載完成', 'info');
+            
+            // 確保jQuery已定義
+            if (typeof jQuery === 'undefined') {
+                debugLog('jQuery 未加載!', 'error');
+                // 動態載入jQuery
+                var script = document.createElement('script');
+                script.src = 'https://code.jquery.com/jquery-3.6.0.min.js';
+                document.head.appendChild(script);
+                script.onload = function() {
+                    debugLog('jQuery 動態載入成功', 'success');
+                    initializeApp(jQuery);
+                };
+            } else {
+                debugLog('jQuery 已加載: ' + jQuery.fn.jquery, 'success');
+                initializeApp(jQuery);
+            }
+        });
+        
+        function initializeApp($) {
+            debugLog('初始化應用...', 'info');
+            
+            // 為狀態值添加顏色
+            $(".status-value").each(function() {
+                if($(this).text() === "running") {
+                    $(this).addClass("running");
+                } else {
+                    $(this).addClass("stopped");
+                }
+            });
+            
+            // 使用事件委託綁定所有按鈕事件
+            
+            // 刷新狀態
+            $(document).on('click', '#refresh-btn', function() {
+                debugLog('點擊刷新按鈕', 'info');
+                $.ajax({
+                    url: "/plugin/guacamole/status",
+                    type: "GET",
+                    beforeSend: function() {
+                        debugLog('發送狀態請求...', 'info');
+                    },
+                    success: function(data) {
+                        debugLog('獲取狀態成功: ' + JSON.stringify(data), 'success');
+                        $("#guacd-status").text(data.guacd).removeClass("running stopped").addClass(data.guacd === "running" ? "running" : "stopped");
+                        $("#guacamole-status").text(data.guacamole).removeClass("running stopped").addClass(data.guacamole === "running" ? "running" : "stopped");
+                        $("#mysql-status").text(data.mysql).removeClass("running stopped").addClass(data.mysql === "running" ? "running" : "stopped");
+                    },
+                    error: function(xhr, status, error) {
+                        debugLog('獲取狀態失敗: ' + error, 'error');
+                        console.error("Status request failed:", xhr.responseText);
+                    }
+                });
+            });
+            
+            // 啟動服務
+            $(document).on('click', '#start-btn', function() {
+                debugLog('點擊啟動按鈕', 'info');
+                var $btn = $(this);
+                $btn.prop("disabled", true).text("啟動中...");
+                
+                $.ajax({
+                    url: "/plugin/guacamole/start",
+                    type: "POST",
+                    contentType: "application/json",
+                    data: JSON.stringify({}),
+                    beforeSend: function() {
+                        debugLog('發送啟動請求...', 'info');
+                    },
+                    success: function(data) {
+                        $btn.prop("disabled", false).text("啟動服務");
+                        debugLog('啟動請求響應: ' + JSON.stringify(data), 'info');
+                        if(data.status === "success") {
+                            debugLog('服務啟動成功!', 'success');
+                            alert("服務已成功啟動！");
+                            $("#refresh-btn").trigger('click');
+                        } else {
+                            debugLog('啟動失敗: ' + data.message, 'error');
+                            alert("啟動服務失敗：" + data.message);
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        $btn.prop("disabled", false).text("啟動服務");
+                        debugLog('啟動請求失敗: ' + error, 'error');
+                        console.error("Start request failed:", xhr.responseText);
+                        alert("啟動服務請求失敗：" + error);
+                    }
+                });
+            });
+            
+            // 停止服務
+            $(document).on('click', '#stop-btn', function() {
+                debugLog('點擊停止按鈕', 'info');
+                var $btn = $(this);
+                $btn.prop("disabled", true).text("停止中...");
+                
+                $.ajax({
+                    url: "/plugin/guacamole/stop",
+                    type: "POST",
+                    contentType: "application/json",
+                    data: JSON.stringify({}),
+                    beforeSend: function() {
+                        debugLog('發送停止請求...', 'info');
+                    },
+                    success: function(data) {
+                        $btn.prop("disabled", false).text("停止服務");
+                        debugLog('停止請求響應: ' + JSON.stringify(data), 'info');
+                        if(data.status === "success") {
+                            debugLog('服務停止成功!', 'success');
+                            alert("服務已成功停止！");
+                            $("#refresh-btn").trigger('click');
+                        } else {
+                            debugLog('停止失敗: ' + data.message, 'error');
+                            alert("停止服務失敗：" + data.message);
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        $btn.prop("disabled", false).text("停止服務");
+                        debugLog('停止請求失敗: ' + error, 'error');
+                        console.error("Stop request failed:", xhr.responseText);
+                        alert("停止服務請求失敗：" + error);
+                    }
+                });
+            });
+            
+            // 打開 Guacamole
+            $(document).on('click', '#open-guacamole', function() {
+                debugLog('點擊打開Guacamole按鈕', 'info');
+                if($("#guacamole-status").text() === "running") {
+                    debugLog('打開Guacamole界面', 'info');
+                    $("#guacamole-frame").attr("src", "http://" + window.location.hostname + ":8080/guacamole/").show();
+                } else {
+                    debugLog('Guacamole未運行', 'error');
+                    alert("Guacamole 服務未運行，請先啟動服務！");
+                }
+            });
+            
+            // 創建連接
+            $(document).on('click', '#create-connection-btn', function() {
+                debugLog('點擊創建連接按鈕', 'info');
+                var connectionData = {
+                    name: $("#connection-name").val(),
+                    protocol: $("#protocol").val(),
+                    host: $("#host").val(),
+                    port: $("#port").val(),
+                    username: $("#username").val(),
+                    password: $("#password").val()
+                };
+                
+                debugLog('連接數據: ' + JSON.stringify(connectionData), 'info');
+                
+                var $btn = $(this);
+                $btn.prop("disabled", true).text("創建中...");
+                
+                $.ajax({
+                    url: "/plugin/guacamole/create_connection",
+                    type: "POST",
+                    contentType: "application/json",
+                    data: JSON.stringify(connectionData),
+                    beforeSend: function() {
+                        debugLog('發送創建連接請求...', 'info');
+                    },
+                    success: function(data) {
+                        $btn.prop("disabled", false).text("創建連接");
+                        debugLog('創建連接響應: ' + JSON.stringify(data), 'info');
+                        if(data.status === "success") {
+                            debugLog('連接創建成功!', 'success');
+                            alert("連接已成功創建！");
+                        } else {
+                            debugLog('創建連接失敗: ' + data.message, 'error');
+                            alert("創建連接失敗：" + data.message);
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        $btn.prop("disabled", false).text("創建連接");
+                        debugLog('創建連接請求失敗: ' + error, 'error');
+                        console.error("Create connection failed:", xhr.responseText);
+                        alert("創建連接請求失敗：" + error);
+                    }
+                });
+            });
+            
+            // 更新端口號根據協議
+            $(document).on('change', '#protocol', function() {
+                var protocol = $(this).val();
+                debugLog('協議變更為: ' + protocol, 'info');
+                if(protocol === "rdp") {
+                    $("#port").val(3389);
+                } else if(protocol === "ssh") {
+                    $("#port").val(22);
+                } else if(protocol === "vnc") {
+                    $("#port").val(5900);
+                }
+            });
+            
+            // 立即執行一次刷新
+            debugLog('初始刷新狀態', 'info');
+            $(document).trigger('click', '#refresh-btn');
+            
+            debugLog('應用初始化完成', 'success');
+        }
+    </script>
+</body>
+</html>
