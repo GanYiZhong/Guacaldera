@@ -120,8 +120,8 @@ def start_mysql_container(network):
         init_db_path = f'{plugin_root}/docker/init'
         os.makedirs(init_db_path, exist_ok=True)
         
-        # 下載 SQL 初始化腳本
-        sql_url = "https://raw.githubusercontent.com/apache/guacamole-client/1.5.5/extensions/guacamole-auth-jdbc/modules/guacamole-auth-jdbc-mysql/schema/upgrade/upgrade-pre-1.5.0.sql"
+        # 下載 SQL 初始化腳本 - 使用正確的create-schema.sql而非upgrade腳本
+        sql_url = "https://raw.githubusercontent.com/apache/guacamole-client/1.5.5/extensions/guacamole-auth-jdbc/modules/guacamole-auth-jdbc-mysql/schema/create-schema.sql"
         response = requests.get(sql_url)
         with open(f'{init_db_path}/initdb.sql', 'wb') as f:
             f.write(response.content)
@@ -146,6 +146,7 @@ def start_mysql_container(network):
     except Exception as e:
         logging.error(f"Error starting MySQL container: {e}")
         raise
+
 
 def start_guacd_container(network):
     try:
@@ -203,10 +204,16 @@ def start_guacamole_container(network):
 
 async def stop_containers(request):
     try:
-        containers = docker_client.containers.list(filters={'name': 'guacamole'})
-        containers.extend(docker_client.containers.list(filters={'name': 'guacd'}))
-        containers.extend(docker_client.containers.list(filters={'name': 'guacamole-mysql'}))
+        if not docker_client:
+            logging.error("Docker client not initialized")
+            return web.json_response({'status': 'error', 'message': 'Docker client not initialized'})
         
+        # 列出所有相關容器
+        containers = docker_client.containers.list(all=True, filters={'name': 'guacamole'})
+        containers.extend(docker_client.containers.list(all=True, filters={'name': 'guacd'}))
+        containers.extend(docker_client.containers.list(all=True, filters={'name': 'guacamole-mysql'}))
+        
+        # 停止每個容器
         for container in containers:
             container.stop()
             logging.info(f"Stopped container: {container.name}")
@@ -215,6 +222,7 @@ async def stop_containers(request):
     except Exception as e:
         logging.error(f"Error stopping containers: {e}")
         return web.json_response({'status': 'error', 'message': str(e)})
+
 
 async def get_status(request):
     status = await get_container_status()
